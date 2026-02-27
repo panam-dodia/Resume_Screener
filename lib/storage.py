@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from supabase import create_client, Client
 
@@ -6,12 +7,19 @@ BUCKET = "resumes"
 _client: Client | None = None
 
 
+def _get_secret(key: str) -> str:
+    try:
+        return st.secrets[key]
+    except Exception:
+        return os.environ[key]
+
+
 def _get_client() -> Client:
     global _client
     if _client is None:
         _client = create_client(
-            st.secrets["SUPABASE_URL"],
-            st.secrets["SUPABASE_SERVICE_KEY"],
+            _get_secret("SUPABASE_URL"),
+            _get_secret("SUPABASE_SERVICE_KEY"),
         )
     return _client
 

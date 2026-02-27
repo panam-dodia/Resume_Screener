@@ -1,0 +1,10 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.streamlit/secrets.toml
+.env
+debug_models.py
+*.jsonl
+.git/

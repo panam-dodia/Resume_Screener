@@ -1,5 +1,5 @@
 import streamlit as st
-from lib.db import list_batches, search_by_embedding
+from lib.db import list_batches, search_by_embedding, shortlist_candidates
 from lib.ai import get_embedding, score_candidates
 from lib.storage import get_signed_url
 
@@ -32,7 +32,6 @@ query = st.text_area(
 )
 
 if st.button("Search", type="primary", disabled=not query.strip()):
-    # Clear any previous results before running a new search
     st.session_state.pop("search_results", None)
     st.session_state.pop("search_candidate_map", None)
 
@@ -51,15 +50,25 @@ if st.button("Search", type="primary", disabled=not query.strip()):
     with st.spinner(f"Scoring {len(candidates)} candidates with Gemini..."):
         scored = score_candidates(query, candidates)
 
-    # Store in session state so results survive reruns (e.g. clicking "View Resume")
     st.session_state["search_results"] = scored
     st.session_state["search_candidate_map"] = {c["id"]: c for c in candidates}
 
-# ── Render results from session state ─────────────────────────────────────────
-# Rendered outside the search button block so "View Resume" buttons work on rerun
+# ── Render results ─────────────────────────────────────────────────────────────
 if "search_results" in st.session_state:
     scored = st.session_state["search_results"]
     candidate_map = st.session_state["search_candidate_map"]
+
+    # ── Role name input — set once at the top, used by every Shortlist button ──
+    col_label, col_role_input = st.columns([1, 3])
+    with col_label:
+        st.markdown("**Shortlist role:**")
+    with col_role_input:
+        shortlist_role = st.text_input(
+            "Role name",
+            placeholder="e.g. ML Engineer Feb 2026",
+            label_visibility="collapsed",
+            key="shortlist_role_input",
+        )
 
     st.markdown(f"### Top {len(scored)} Results")
 
@@ -82,12 +91,26 @@ if "search_results" in st.session_state:
             badge = f"🔴 {score}/100"
 
         with st.container(border=True):
-            col_name, col_score = st.columns([3, 1])
+            col_name, col_score, col_btn = st.columns([3, 1, 1])
             with col_name:
                 st.markdown(f"**{rank}. {name}**")
                 st.caption(f"{file_name} · Batch: {batch}")
             with col_score:
                 st.markdown(f"### {badge}")
+            with col_btn:
+                already_added = st.session_state.get(f"shortlisted_{candidate_id}")
+                if already_added:
+                    st.success("Shortlisted")
+                elif st.button(
+                    "Shortlist",
+                    key=f"sl_{candidate_id}",
+                    disabled=not shortlist_role.strip(),
+                    help="Set a role name above first" if not shortlist_role.strip() else "",
+                ):
+                    added = shortlist_candidates([candidate_id], shortlist_role.strip())
+                    st.session_state[f"shortlisted_{candidate_id}"] = True
+                    if added > 0:
+                        st.rerun()
 
             if summary:
                 st.markdown(f"*{summary}*")

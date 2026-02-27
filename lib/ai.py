@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from datetime import date
 import streamlit as st
@@ -8,10 +9,17 @@ from google.genai import types
 _client: genai.Client | None = None
 
 
+def _get_secret(key: str) -> str:
+    try:
+        return st.secrets[key]
+    except Exception:
+        return os.environ[key]
+
+
 def _get_client() -> genai.Client:
     global _client
     if _client is None:
-        _client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+        _client = genai.Client(api_key=_get_secret("GEMINI_API_KEY"))
     return _client
 
 
