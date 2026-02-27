@@ -1,31 +1,33 @@
 import json
+import time
+from datetime import date
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
-_configured = False
+_client: genai.Client | None = None
 
 
-def _configure():
-    global _configured
-    if not _configured:
-        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        _configured = True
+def _get_client() -> genai.Client:
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    return _client
 
 
 def get_embedding(text: str) -> list[float]:
     """
-    Generate a 768-dimensional embedding for the given text
-    using Google's text-embedding-004 model.
+    Generate an embedding for the given text using gemini-embedding-001.
     Text is truncated to ~8000 characters to stay within limits.
     """
-    _configure()
+    client = _get_client()
     truncated = text[:8000]
-    result = genai.embed_content(
-        model="models/text-embedding-004",
-        content=truncated,
-        task_type="retrieval_document",
+    result = client.models.embed_content(
+        model="gemini-embedding-001",
+        contents=truncated,
+        config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
     )
-    return result["embedding"]
+    return result.embeddings[0].values
 
 
 def extract_candidate_name(resume_text: str) -> str:
@@ -33,7 +35,7 @@ def extract_candidate_name(resume_text: str) -> str:
     Ask Gemini to extract the candidate's name from the top of their resume.
     Falls back gracefully on any error.
     """
-    _configure()
+    client = _get_client()
     snippet = resume_text[:400]
     prompt = (
         "Extract the candidate's full name from the following resume text. "
@@ -41,10 +43,11 @@ def extract_candidate_name(resume_text: str) -> str:
         f"Resume text:\n{snippet}"
     )
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
         name = response.text.strip()
-        # Sanity check: names shouldn't be very long
         if len(name) > 80 or "\n" in name:
             return "Unknown"
         return name
@@ -54,15 +57,11 @@ def extract_candidate_name(resume_text: str) -> str:
 
 def score_candidates(query: str, candidates: list[dict]) -> list[dict]:
     """
-    Given a job description/query and a list of candidate dicts
-    (each with 'id', 'candidate_name', 'extracted_text'),
-    ask Gemini to score each candidate 0-100 and explain why.
-
+    Score each candidate 0-100 against the job query and explain why.
     Returns a list of dicts: [{id, score, reason}] sorted by score descending.
     """
-    _configure()
+    client = _get_client()
 
-    # Build a compact summary of each candidate to keep token usage manageable
     summaries = []
     for i, c in enumerate(candidates):
         text_snippet = c["extracted_text"][:1500]
@@ -75,7 +74,12 @@ def score_candidates(query: str, candidates: list[dict]) -> list[dict]:
 
     candidates_block = "\n---\n".join(summaries)
 
-    prompt = f"""You are a recruiter's assistant. Score each candidate below against the job query.
+    today = date.today().strftime("%B %d, %Y")
+    prompt = f"""You are a recruiter's assistant. Today's date is {today}.
+
+For each candidate below, evaluate how well their resume matches the job description. Treat any year up to {date.today().year} as past or current experience.
+
+Two candidates with genuinely similar backgrounds should receive similar scores — scoring must reflect actual match quality, not artificial differentiation.
 
 JOB QUERY:
 {query}
@@ -88,30 +92,41 @@ Return a JSON array (no markdown, no extra text) with one object per candidate:
   {{
     "id": "<candidate UUID>",
     "score": <integer 0-100>,
-    "reason": "<1-2 sentence explanation of the match>"
+    "summary": "<1 sentence describing who this candidate is, e.g. their role/specialty>",
+    "match_reason": "<2-3 sentences on what specifically in this resume matches the job requirements>",
+    "gaps": "<1 sentence on the biggest missing skill or gap, or 'None' if strong match>"
   }}
 ]
 
-Score based on skills match, experience relevance, and seniority fit. Be honest — not every candidate will score high."""
+Score based on: skills alignment, relevant experience, seniority fit, and tool/tech overlap with the job description."""
 
-    try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content(prompt)
-        raw = response.text.strip()
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
+            raw = response.text.strip()
 
-        # Strip markdown code fences if Gemini adds them
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.strip()
+            # Strip markdown code fences if Gemini adds them
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+                raw = raw.strip()
 
-        results = json.loads(raw)
-        results.sort(key=lambda x: x.get("score", 0), reverse=True)
-        return results
-    except Exception as e:
-        # Return a fallback so the UI doesn't crash
-        return [
-            {"id": c["id"], "score": 0, "reason": f"Scoring failed: {e}"}
-            for c in candidates
-        ]
+            results = json.loads(raw)
+            results.sort(key=lambda x: x.get("score", 0), reverse=True)
+            return results
+
+        except Exception as e:
+            err = str(e)
+            if "429" in err and attempt < 2:
+                wait = 60 * (attempt + 1)  # 60s, then 120s
+                st.warning(f"Rate limit hit — waiting {wait}s before retry ({attempt+1}/3)...")
+                time.sleep(wait)
+            else:
+                return [
+                    {"id": c["id"], "score": 0, "reason": f"Scoring failed: {e}"}
+                    for c in candidates
+                ]

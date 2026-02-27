@@ -4,9 +4,8 @@ from lib.storage import get_signed_url
 
 st.set_page_config(page_title="View Resume", page_icon="📄", layout="wide")
 
-# ── Read resume ID from URL query params ─────────────────────────────────────
-params = st.query_params
-resume_id = params.get("id")
+# ── Read resume ID from session state (set by Search page) ───────────────────
+resume_id = st.session_state.get("view_resume_id")
 
 if not resume_id:
     st.warning("No resume selected. Go to **Search Candidates** and click 'View Resume' on a result.")
@@ -46,7 +45,7 @@ st.divider()
 # ── Extracted text ────────────────────────────────────────────────────────────
 st.subheader("Extracted Text")
 st.text_area(
-    label="",
+    label="Resume Text",
     value=resume["extracted_text"],
     height=600,
     label_visibility="collapsed",

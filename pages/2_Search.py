@@ -1,6 +1,7 @@
 import streamlit as st
 from lib.db import list_batches, search_by_embedding
 from lib.ai import get_embedding, score_candidates
+from lib.storage import get_signed_url
 
 st.set_page_config(page_title="Search Candidates", page_icon="🔍", layout="wide")
 st.title("Search Candidates")
@@ -31,11 +32,12 @@ query = st.text_area(
 )
 
 if st.button("Search", type="primary", disabled=not query.strip()):
-    with st.spinner("Searching resumes..."):
-        # 1. Embed the query
-        query_embedding = get_embedding(query)
+    # Clear any previous results before running a new search
+    st.session_state.pop("search_results", None)
+    st.session_state.pop("search_candidate_map", None)
 
-        # 2. Vector search in DB
+    with st.spinner("Searching resumes..."):
+        query_embedding = get_embedding(query)
         candidates = search_by_embedding(
             query_embedding=query_embedding,
             batch_filter=batch_filter,
@@ -47,24 +49,31 @@ if st.button("Search", type="primary", disabled=not query.strip()):
         st.stop()
 
     with st.spinner(f"Scoring {len(candidates)} candidates with Gemini..."):
-        # 3. Ask Gemini to score and explain each candidate
         scored = score_candidates(query, candidates)
 
-    # ── Results ───────────────────────────────────────────────────────────────
-    # Build a lookup so we can display batch info alongside scores
-    candidate_map = {c["id"]: c for c in candidates}
+    # Store in session state so results survive reruns (e.g. clicking "View Resume")
+    st.session_state["search_results"] = scored
+    st.session_state["search_candidate_map"] = {c["id"]: c for c in candidates}
+
+# ── Render results from session state ─────────────────────────────────────────
+# Rendered outside the search button block so "View Resume" buttons work on rerun
+if "search_results" in st.session_state:
+    scored = st.session_state["search_results"]
+    candidate_map = st.session_state["search_candidate_map"]
 
     st.markdown(f"### Top {len(scored)} Results")
 
     for rank, result in enumerate(scored, start=1):
         candidate_id = result.get("id")
         score = result.get("score", 0)
-        reason = result.get("reason", "")
+        summary = result.get("summary", "")
+        match_reason = result.get("match_reason", result.get("reason", ""))
+        gaps = result.get("gaps", "")
         candidate = candidate_map.get(candidate_id, {})
         name = candidate.get("candidate_name", "Unknown")
         batch = candidate.get("batch_name", "")
+        file_name = candidate.get("file_name", "")
 
-        # Color-code the score badge
         if score >= 80:
             badge = f"🟢 {score}/100"
         elif score >= 60:
@@ -76,11 +85,29 @@ if st.button("Search", type="primary", disabled=not query.strip()):
             col_name, col_score = st.columns([3, 1])
             with col_name:
                 st.markdown(f"**{rank}. {name}**")
-                st.caption(f"Batch: {batch}")
+                st.caption(f"{file_name} · Batch: {batch}")
             with col_score:
                 st.markdown(f"### {badge}")
 
-            st.markdown(reason)
+            if summary:
+                st.markdown(f"*{summary}*")
 
-            view_url = f"/View_Resume?id={candidate_id}"
-            st.page_link(view_url, label="View Resume →", icon="📄")
+            if match_reason:
+                st.markdown(f"**Why it matches:** {match_reason}")
+
+            if gaps and gaps.lower() != "none":
+                st.markdown(f"**Gap:** {gaps}")
+
+            with st.expander("View Resume"):
+                try:
+                    signed_url = get_signed_url(candidate.get("storage_path", ""))
+                    st.link_button("Download Original PDF", signed_url, icon="⬇️")
+                except Exception:
+                    pass
+                st.text_area(
+                    label="Extracted Text",
+                    value=candidate.get("extracted_text", ""),
+                    height=400,
+                    label_visibility="collapsed",
+                    key=f"text_{candidate_id}",
+                )
