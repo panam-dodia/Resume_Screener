@@ -72,7 +72,7 @@ def score_candidates(query: str, candidates: list[dict]) -> list[dict]:
 
     summaries = []
     for i, c in enumerate(candidates):
-        text_snippet = c["extracted_text"][:1500]
+        text_snippet = c["extracted_text"][:4000]
         summaries.append(
             f"CANDIDATE {i+1}\n"
             f"ID: {c['id']}\n"
@@ -85,9 +85,15 @@ def score_candidates(query: str, candidates: list[dict]) -> list[dict]:
     today = date.today().strftime("%B %d, %Y")
     prompt = f"""You are a recruiter's assistant. Today's date is {today}.
 
-For each candidate below, evaluate how well their resume matches the job description. Treat any year up to {date.today().year} as past or current experience.
+Score each candidate INDEPENDENTLY against the job description below. Do NOT compare candidates against each other — each score must reflect only how well that individual matches the job requirements, regardless of who else is in the list.
 
-Two candidates with genuinely similar backgrounds should receive similar scores — scoring must reflect actual match quality, not artificial differentiation.
+Treat any year up to {date.today().year} as past or current experience. Count ALL work history listed in the resume, not just the most recent role.
+
+Rules:
+- Score purely against the JD, not relative to other candidates
+- Two candidates with similar backgrounds should receive similar scores
+- A candidate with strong experience in a different domain should score low even if experienced overall
+- Gaps must reference the JD requirements, never compare to other candidates
 
 JOB QUERY:
 {query}
@@ -102,7 +108,7 @@ Return a JSON array (no markdown, no extra text) with one object per candidate:
     "score": <integer 0-100>,
     "summary": "<1 sentence describing who this candidate is, e.g. their role/specialty>",
     "match_reason": "<2-3 sentences on what specifically in this resume matches the job requirements>",
-    "gaps": "<1 sentence on the biggest missing skill or gap, or 'None' if strong match>"
+    "gaps": "<1 sentence on the biggest missing skill or gap relative to the JD, or 'None' if strong match>"
   }}
 ]
 

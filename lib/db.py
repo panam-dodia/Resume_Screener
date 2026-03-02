@@ -29,6 +29,7 @@ def insert_resume(
     storage_path: str,
     extracted_text: str,
     embedding: list[float],
+    email: str | None = None,
 ) -> dict:
     """Insert a resume record and return the inserted row."""
     client = _get_client()
@@ -42,6 +43,7 @@ def insert_resume(
                 "storage_path": storage_path,
                 "extracted_text": extracted_text,
                 "embedding": embedding,
+                "email": email,
             }
         )
         .execute()
@@ -162,7 +164,7 @@ def list_shortlisted(role_filter: str | None = None) -> list[dict]:
     client = _get_client()
     query = client.table("shortlists").select(
         "id, role_name, status, notes, shortlisted_at, "
-        "resume_id, resumes(candidate_name, file_name, batch_name, storage_path)"
+        "resume_id, resumes(candidate_name, file_name, batch_name, storage_path, email)"
     ).order("shortlisted_at", desc=True)
 
     if role_filter:
@@ -212,3 +214,87 @@ def remove_from_shortlist(shortlist_id: str):
     """Delete a shortlist entry."""
     client = _get_client()
     client.table("shortlists").delete().eq("id", shortlist_id).execute()
+
+
+# ── Pipeline stages functions ──────────────────────────────────────────────────
+
+def get_pipeline_stages() -> list[str]:
+    """Return stage names ordered by stage_order."""
+    client = _get_client()
+    result = (
+        client.table("pipeline_stages")
+        .select("stage_name, stage_order")
+        .order("stage_order")
+        .execute()
+    )
+    return [row["stage_name"] for row in result.data]
+
+
+def save_pipeline_stages(stages: list[str]):
+    """Replace all pipeline stages with the given ordered list."""
+    client = _get_client()
+    client.table("pipeline_stages").delete().neq("id", 0).execute()
+    rows = [{"stage_name": s, "stage_order": i + 1} for i, s in enumerate(stages)]
+    client.table("pipeline_stages").insert(rows).execute()
+
+
+def delete_resume(resume_id: str) -> str | None:
+    """
+    Delete a resume record by ID. Shortlist entries cascade-delete.
+    Returns the storage_path so the caller can clean up Storage.
+    """
+    client = _get_client()
+    result = (
+        client.table("resumes")
+        .select("storage_path")
+        .eq("id", resume_id)
+        .limit(1)
+        .execute()
+    )
+    storage_path = result.data[0]["storage_path"] if result.data else None
+    client.table("resumes").delete().eq("id", resume_id).execute()
+    return storage_path
+
+
+def delete_batch(batch_name: str) -> list[str]:
+    """
+    Delete all resumes in a batch. Shortlist entries cascade-delete.
+    Returns list of storage_paths so the caller can clean up Storage.
+    """
+    client = _get_client()
+    result = (
+        client.table("resumes")
+        .select("storage_path")
+        .eq("batch_name", batch_name)
+        .execute()
+    )
+    paths = [r["storage_path"] for r in result.data]
+    client.table("resumes").delete().eq("batch_name", batch_name).execute()
+    return paths
+
+
+def update_resume_email(resume_id: str, email: str):
+    """Update the email for a resume record."""
+    client = _get_client()
+    client.table("resumes").update({"email": email}).eq("id", resume_id).execute()
+
+
+def get_rejection_candidates(role_name: str, hired_shortlist_id: str) -> list[dict]:
+    """
+    Return all shortlisted candidates for a role except the hired one.
+    Each row includes candidate_name, email (may be None), shortlist id.
+    """
+    client = _get_client()
+    result = (
+        client.table("shortlists")
+        .select("id, resume_id, resumes(candidate_name, email)")
+        .eq("role_name", role_name)
+        .neq("id", hired_shortlist_id)
+        .neq("status", "Rejected")
+        .execute()
+    )
+    rows = []
+    for row in result.data:
+        resume = row.pop("resumes", {}) or {}
+        rows.append({**row, **resume})
+    return rows

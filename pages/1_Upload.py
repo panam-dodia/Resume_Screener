@@ -1,6 +1,6 @@
 import uuid
 import streamlit as st
-from lib.pdf_parser import extract_text, extract_name_heuristic
+from lib.pdf_parser import extract_text, extract_name_heuristic, extract_email
 from lib.ai import get_embedding, extract_candidate_name
 from lib.storage import upload_pdf
 from lib.db import insert_resume
@@ -48,10 +48,13 @@ if st.button("Upload & Process", type="primary", disabled=not (batch_name and up
             storage_path = f"{batch_name}/{uuid.uuid4().hex}_{safe_filename}"
             upload_pdf(pdf_bytes, storage_path)
 
-            # 4. Generate embedding
+            # 4. Extract email
+            email = extract_email(text)
+
+            # 5. Generate embedding
             embedding = get_embedding(text)
 
-            # 5. Insert into DB
+            # 6. Insert into DB
             insert_resume(
                 batch_name=batch_name,
                 candidate_name=name,
@@ -59,6 +62,7 @@ if st.button("Upload & Process", type="primary", disabled=not (batch_name and up
                 storage_path=storage_path,
                 extracted_text=text,
                 embedding=embedding,
+                email=email,
             )
 
             success_count += 1

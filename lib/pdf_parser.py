@@ -1,4 +1,5 @@
 import io
+import re
 import pdfplumber
 
 
@@ -11,6 +12,12 @@ def extract_text(pdf_bytes: bytes) -> str:
             if page_text:
                 text_parts.append(page_text)
     return "\n".join(text_parts).strip()
+
+
+def extract_email(text: str) -> str | None:
+    """Extract the first email address found in resume text."""
+    match = re.search(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", text)
+    return match.group(0) if match else None
 
 
 def extract_name_heuristic(text: str) -> str:

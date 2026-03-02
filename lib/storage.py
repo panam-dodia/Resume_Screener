@@ -39,6 +39,15 @@ def upload_pdf(file_bytes: bytes, storage_path: str) -> str:
     return storage_path
 
 
+def delete_pdf(storage_path: str):
+    """Delete a PDF from Supabase Storage. Silently ignores missing files."""
+    client = _get_client()
+    try:
+        client.storage.from_(BUCKET).remove([storage_path])
+    except Exception:
+        pass
+
+
 def get_signed_url(storage_path: str, expires: int = 3600) -> str:
     """
     Generate a temporary signed URL for downloading a PDF.
